@@ -124,8 +124,11 @@ class TripWindow(BaseModel):
 def fetch_flights_for_trip(spot_name: str, start_date: str, end_date: str, user_preferences):
     """Fetch flights for a specific trip"""
     try:
+        print(f"🛫 [DEBUG] Starting flight search for {spot_name}: {start_date} to {end_date}")
+        
         # Initialize flight fetcher
         flight_fetcher = FlightFetcher()
+        print(f"🛫 [DEBUG] Flight fetcher initialized, API enabled: {flight_fetcher.api_enabled}")
         
         # Map surf spots to destination airports
         destination_airports = {
@@ -139,8 +142,11 @@ def fetch_flights_for_trip(spot_name: str, start_date: str, end_date: str, user_
             print(f"❌ No destination airport mapped for {spot_name}")
             return []
         
+        print(f"🛫 [DEBUG] Destination airport: {destination_airport}")
+        
         # Get user departure airports
         departure_airports = user_preferences.departure_airports
+        print(f"🛫 [DEBUG] Departure airports: {departure_airports}")
         
         # Determine flight dates
         from datetime import datetime, timedelta
@@ -151,15 +157,20 @@ def fetch_flights_for_trip(spot_name: str, start_date: str, end_date: str, user_
         outbound_date = trip_start - timedelta(days=1)
         return_date = trip_end
         
+        print(f"🛫 [DEBUG] Flight dates: {outbound_date} to {return_date}")
+        
         # Get flight preferences
         user_flight_times = getattr(user_preferences, 'flight_times', {})
         outbound_time = user_flight_times.get('outbound_preference', '19:30')
         return_time = user_flight_times.get('return_preference', '17:00')
         
+        print(f"🛫 [DEBUG] Preferred times: {outbound_time} outbound, {return_time} return")
+        
         # Search flights from all departure airports
         all_flights = []
         for departure_airport in departure_airports:
             try:
+                print(f"🛫 [DEBUG] Searching flights: {departure_airport} → {destination_airport}")
                 flights = flight_fetcher.fetch_flights(
                     departure_airport=departure_airport,
                     destination_airport=destination_airport,
@@ -170,27 +181,37 @@ def fetch_flights_for_trip(spot_name: str, start_date: str, end_date: str, user_
                     stopovers_allowed=user_preferences.stopovers_allowed
                 )
                 
+                print(f"🛫 [DEBUG] fetch_flights returned {len(flights) if flights else 0} flights")
+                
                 if flights:
                     # Add departure airport info to each flight
                     for flight in flights:
                         flight['departure_airport'] = departure_airport
                     all_flights.extend(flights)
+                    print(f"🛫 [DEBUG] Added {len(flights)} flights from {departure_airport}")
+                else:
+                    print(f"🛫 [DEBUG] No flights found from {departure_airport}")
                     
             except Exception as e:
                 print(f"❌ Error fetching flights from {departure_airport}: {e}")
+                import traceback
+                print(f"❌ Traceback: {traceback.format_exc()}")
                 continue
         
         # Sort by price and return top 3
         if all_flights:
             all_flights = sorted(all_flights, key=lambda x: x.get('price', 999999))[:3]
-            print(f"✅ Found {len(all_flights)} flights for {spot_name}")
+            print(f"✅ [DEBUG] FINAL: Found {len(all_flights)} flights for {spot_name}")
+            print(f"✅ [DEBUG] First flight: £{all_flights[0].get('price')} from {all_flights[0].get('departure_airport')}")
         else:
-            print(f"⚠️ No flights found for {spot_name}")
+            print(f"⚠️ [DEBUG] FINAL: No flights found for {spot_name}")
         
         return all_flights
         
     except Exception as e:
         print(f"❌ Error in fetch_flights_for_trip: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
         return []
 
 # API Endpoints
