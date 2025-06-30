@@ -568,75 +568,170 @@ class FlightFetcher:
         outbound_hour = self._parse_preferred_hour(outbound_time_range, default=19)
         return_hour = self._parse_preferred_hour(return_time_range, default=17)
         
-        # Create realistic airline mappings based on departure airport
-        airport_airlines = {
-            'LHR': ['British Airways', 'Virgin Atlantic', 'Air France', 'KLM', 'Lufthansa'],
-            'LGW': ['easyJet', 'British Airways', 'Norwegian', 'TUI Airways'],
-            'STN': ['Ryanair', 'easyJet'],
-            'LTN': ['easyJet', 'Wizz Air', 'TUI Airways'],
-            'default': ['British Airways', 'Air France', 'KLM']
+        # Define realistic route mappings with connections where needed
+        realistic_routes = {
+            # LHR routes - mostly require connections to European surf spots
+            ('LHR', 'BOD'): {  # Bordeaux (for La Graviere)
+                'airlines': ['Air France', 'British Airways'],
+                'via': ['CDG', 'MAD'],  # Connect via Paris or Madrid
+                'connection_time': 90,  # 1.5 hours layover
+                'flight_time': 120,     # 2 hours each leg
+                'exists_direct': False
+            },
+            ('LHR', 'LIS'): {  # Lisbon (for Supertubos)
+                'airlines': ['TAP Air Portugal', 'British Airways'],
+                'via': [None],  # Direct flights exist
+                'connection_time': 0,
+                'flight_time': 150,     # 2.5 hours direct
+                'exists_direct': True
+            },
+            ('LHR', 'AGA'): {  # Agadir (for Anchor Point in Taghazout, Morocco)
+                'airlines': ['British Airways', 'Royal Air Maroc'],
+                'via': ['MAD', 'CMN'],  # Connect via Madrid or Casablanca
+                'connection_time': 120, # 2 hours layover
+                'flight_time': 180,     # 3 hours each leg
+                'exists_direct': False
+            },
+            
+            # LGW routes - budget airlines with some direct services
+            ('LGW', 'BOD'): {
+                'airlines': ['easyJet'],
+                'via': [None],  # Direct flights exist
+                'connection_time': 0,
+                'flight_time': 105,     # 1h 45m direct
+                'exists_direct': True
+            },
+            ('LGW', 'LIS'): {
+                'airlines': ['easyJet', 'TAP Air Portugal'],
+                'via': [None],
+                'connection_time': 0,
+                'flight_time': 135,     # 2h 15m direct
+                'exists_direct': True
+            },
+            ('LGW', 'AGA'): {
+                'airlines': ['easyJet', 'Royal Air Maroc'],
+                'via': ['MAD'],  # Connect via Madrid
+                'connection_time': 90,
+                'flight_time': 150,     # 2.5 hours each leg
+                'exists_direct': False
+            }
         }
         
-        available_airlines = airport_airlines.get(departure_airport, airport_airlines['default'])
+        # Get route info or default
+        route_key = (departure_airport, destination_airport)
+        route_info = realistic_routes.get(route_key, {
+            'airlines': ['British Airways', 'Air France', 'KLM'],
+            'via': ['CDG'],  # Default to Paris connection
+            'connection_time': 90,
+            'flight_time': 120,
+            'exists_direct': False
+        })
         
-        # Create 2-3 mock flights with varying prices and times
         mock_flights = []
         
-        # Flight 1: Close to preferred time, higher price
-        mock_flights.append({
-            'price': random.randint(120, 180),
-            'currency': 'GBP',
-            'booking_url': f'https://example.com/book?from={departure_airport}&to={destination_airport}',
-            'total_duration': '4h 25m',
-            'departure_airport': departure_airport,
-            'outbound': {
-                'departure': f'{outbound_hour:02d}:{random.randint(0, 59):02d}',
-                'arrival': f'{(outbound_hour + 2) % 24:02d}:{random.randint(0, 59):02d}',
-                'duration': '2h 15m',
-                'airline': random.choice(available_airlines),
-                'stops': 0,
-                'via': None
-            },
-            'inbound': {
-                'departure': f'{return_hour:02d}:{random.randint(0, 59):02d}',
-                'arrival': f'{(return_hour + 2) % 24:02d}:{random.randint(0, 59):02d}',
-                'duration': '2h 10m',
-                'airline': random.choice(available_airlines),
-                'stops': 0,
-                'via': None
-            },
-            'mock_data_note': 'Flight API unavailable - showing sample data'
-        })
+        # Create 2-3 realistic flights
+        for i in range(2):
+            airline = random.choice(route_info['airlines'])
+            has_connection = route_info['via'][0] is not None
+            via_airport = random.choice(route_info['via']) if has_connection else None
+            
+            # Calculate realistic times
+            if has_connection:
+                # Flight 1: Departure to connection
+                first_leg_departure = f'{outbound_hour:02d}:{random.randint(0, 59):02d}'
+                first_leg_arrival_hour = (outbound_hour + route_info['flight_time'] // 60) % 24
+                first_leg_arrival = f'{first_leg_arrival_hour:02d}:{random.randint(0, 59):02d}'
+                
+                # Flight 2: Connection to destination (after layover)
+                second_leg_departure_hour = (first_leg_arrival_hour + route_info['connection_time'] // 60) % 24
+                second_leg_departure = f'{second_leg_departure_hour:02d}:{random.randint(0, 59):02d}'
+                final_arrival_hour = (second_leg_departure_hour + route_info['flight_time'] // 60) % 24
+                final_arrival = f'{final_arrival_hour:02d}:{random.randint(0, 59):02d}'
+                
+                # Total duration including layover
+                total_minutes = (route_info['flight_time'] * 2) + route_info['connection_time']
+                total_duration = f'{total_minutes // 60}h {total_minutes % 60}m'
+                
+                outbound_info = {
+                    'departure': first_leg_departure,
+                    'arrival': final_arrival,
+                    'duration': total_duration,
+                    'airline': airline,
+                    'stops': 1,
+                    'via': via_airport
+                }
+                
+                # Return flight with connection
+                return_first_departure = f'{return_hour:02d}:{random.randint(0, 59):02d}'
+                return_final_arrival_hour = (return_hour + total_minutes // 60) % 24
+                return_final_arrival = f'{return_final_arrival_hour:02d}:{random.randint(0, 59):02d}'
+                
+                inbound_info = {
+                    'departure': return_first_departure,
+                    'arrival': return_final_arrival,
+                    'duration': total_duration,
+                    'airline': airline,
+                    'stops': 1,
+                    'via': via_airport
+                }
+                
+                # Price is higher for connections
+                base_price = random.randint(180, 280)
+                
+            else:
+                # Direct flight
+                outbound_departure = f'{outbound_hour:02d}:{random.randint(0, 59):02d}'
+                outbound_arrival_hour = (outbound_hour + route_info['flight_time'] // 60) % 24
+                outbound_arrival = f'{outbound_arrival_hour:02d}:{random.randint(0, 59):02d}'
+                
+                flight_duration = f'{route_info["flight_time"] // 60}h {route_info["flight_time"] % 60}m'
+                
+                outbound_info = {
+                    'departure': outbound_departure,
+                    'arrival': outbound_arrival,
+                    'duration': flight_duration,
+                    'airline': airline,
+                    'stops': 0,
+                    'via': None
+                }
+                
+                # Return flight
+                return_departure = f'{return_hour:02d}:{random.randint(0, 59):02d}'
+                return_arrival_hour = (return_hour + route_info['flight_time'] // 60) % 24
+                return_arrival = f'{return_arrival_hour:02d}:{random.randint(0, 59):02d}'
+                
+                inbound_info = {
+                    'departure': return_departure,
+                    'arrival': return_arrival,
+                    'duration': flight_duration,
+                    'airline': airline,
+                    'stops': 0,
+                    'via': None
+                }
+                
+                # Direct flights are generally cheaper
+                base_price = random.randint(120, 200)
+            
+            # Add some price variation
+            price_variation = random.randint(-30, 50) if i > 0 else 0
+            final_price = base_price + price_variation
+            
+            mock_flights.append({
+                'price': final_price,
+                'currency': 'GBP',
+                'booking_url': f'https://example.com/book?from={departure_airport}&to={destination_airport}',
+                'total_duration': outbound_info['duration'],
+                'departure_airport': departure_airport,
+                'outbound': outbound_info,
+                'inbound': inbound_info,
+                'mock_data_note': 'Flight API unavailable - showing realistic sample data'
+            })
         
-        # Flight 2: Different time, lower price
-        alt_outbound = (outbound_hour + random.choice([-3, 3])) % 24
-        alt_return = (return_hour + random.choice([-2, 2])) % 24
-        
-        mock_flights.append({
-            'price': random.randint(95, 140),
-            'currency': 'GBP',
-            'booking_url': f'https://example.com/book?from={departure_airport}&to={destination_airport}',
-            'total_duration': '3h 50m',
-            'departure_airport': departure_airport,
-            'outbound': {
-                'departure': f'{alt_outbound:02d}:{random.randint(0, 59):02d}',
-                'arrival': f'{(alt_outbound + 2) % 24:02d}:{random.randint(0, 59):02d}',
-                'duration': '1h 55m',
-                'airline': random.choice(available_airlines),
-                'stops': 0,
-                'via': None
-            },
-            'inbound': {
-                'departure': f'{alt_return:02d}:{random.randint(0, 59):02d}',
-                'arrival': f'{(alt_return + 2) % 24:02d}:{random.randint(0, 59):02d}',
-                'duration': '1h 55m',
-                'airline': random.choice(available_airlines),
-                'stops': 0,
-                'via': None
-            },
-            'mock_data_note': 'Flight API unavailable - showing sample data'
-        })
-        
-        print(f"✅ Created {len(mock_flights)} realistic mock flights for {departure_airport} -> {destination_airport}")
+        # Log the realistic flights created
+        route_type = "direct" if not has_connection else f"via {via_airport}"
+        print(f"✅ Created {len(mock_flights)} realistic mock flights for {departure_airport} -> {destination_airport} ({route_type})")
         print(f"   Airlines: {[f['outbound']['airline'] for f in mock_flights]}")
+        print(f"   Prices: £{[f['price'] for f in mock_flights]}")
+        print(f"   Connections: {[f['outbound']['stops'] for f in mock_flights]} stops")
+        
         return mock_flights 
