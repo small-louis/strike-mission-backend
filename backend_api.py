@@ -33,6 +33,7 @@ try:
     from data_fetching.openmeteo import fetch_weather_data, fetch_marine_data
     from utils.data_processor import merge_weather_and_marine_data
     from scoring.wave_scoring import score_forecast
+    from flights.flight_fetcher import FlightFetcher
     BACKEND_AVAILABLE = True
     print("✅ Backend modules imported successfully")
 except ImportError as e:
@@ -117,6 +118,80 @@ class TripWindow(BaseModel):
     avg_score: float
     total_score: float
     flights: List[Dict[str, Any]]
+
+# Helper functions
+
+def fetch_flights_for_trip(spot_name: str, start_date: str, end_date: str, user_preferences):
+    """Fetch flights for a specific trip"""
+    try:
+        # Initialize flight fetcher
+        flight_fetcher = FlightFetcher()
+        
+        # Map surf spots to destination airports
+        destination_airports = {
+            'La Graviere': 'BOD',  # Bordeaux
+            'Supertubos': 'LIS',   # Lisbon  
+            'Anchor Point': 'AGA'   # Agadir
+        }
+        
+        destination_airport = destination_airports.get(spot_name)
+        if not destination_airport:
+            print(f"❌ No destination airport mapped for {spot_name}")
+            return []
+        
+        # Get user departure airports
+        departure_airports = user_preferences.departure_airports
+        
+        # Determine flight dates
+        from datetime import datetime, timedelta
+        trip_start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        trip_end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        
+        # For weekend trips, fly the night before
+        outbound_date = trip_start - timedelta(days=1)
+        return_date = trip_end
+        
+        # Get flight preferences
+        user_flight_times = getattr(user_preferences, 'flight_times', {})
+        outbound_time = user_flight_times.get('outbound_preference', '19:30')
+        return_time = user_flight_times.get('return_preference', '17:00')
+        
+        # Search flights from all departure airports
+        all_flights = []
+        for departure_airport in departure_airports:
+            try:
+                flights = flight_fetcher.fetch_flights(
+                    departure_airport=departure_airport,
+                    destination_airport=destination_airport,
+                    outbound_date=outbound_date.strftime('%Y-%m-%d'),
+                    return_date=return_date.strftime('%Y-%m-%d'),
+                    outbound_time_range=outbound_time,
+                    return_time_range=return_time,
+                    stopovers_allowed=user_preferences.stopovers_allowed
+                )
+                
+                if flights:
+                    # Add departure airport info to each flight
+                    for flight in flights:
+                        flight['departure_airport'] = departure_airport
+                    all_flights.extend(flights)
+                    
+            except Exception as e:
+                print(f"❌ Error fetching flights from {departure_airport}: {e}")
+                continue
+        
+        # Sort by price and return top 3
+        if all_flights:
+            all_flights = sorted(all_flights, key=lambda x: x.get('price', 999999))[:3]
+            print(f"✅ Found {len(all_flights)} flights for {spot_name}")
+        else:
+            print(f"⚠️ No flights found for {spot_name}")
+        
+        return all_flights
+        
+    except Exception as e:
+        print(f"❌ Error in fetch_flights_for_trip: {e}")
+        return []
 
 # API Endpoints
 
@@ -221,6 +296,9 @@ async def analyze_trips(request: TripRequest, background_tasks: BackgroundTasks)
                         # Use 'days' or 'duration_days' depending on what's available
                         duration = window_dict.get("duration_days", window_dict.get("days", 3))
                         
+                        # Fetch flights for this trip
+                        flights = fetch_flights_for_trip(spot_name, start_date, end_date, request.user_preferences)
+                        
                         trip = TripWindow(
                             spot_name=spot_name,
                             start_date=start_date,
@@ -228,7 +306,7 @@ async def analyze_trips(request: TripRequest, background_tasks: BackgroundTasks)
                             duration_days=duration,
                             avg_score=round(window_dict["avg_score"], 1),
                             total_score=round(window_dict["total_score"], 1),
-                            flights=[]  # Will be populated by flight service
+                            flights=flights
                         )
                         all_trips.append(trip)
                         print(f"     Trip {i+1}: {start_date} to {end_date}, score: {window_dict['avg_score']:.2f}")
