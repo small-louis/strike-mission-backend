@@ -250,6 +250,36 @@ async def get_airports():
         "departure_airports": ["LHR", "LGW", "STN", "MAN", "EDI"]  # Common UK airports
     }
 
+@app.get("/test-flights")
+async def test_flights():
+    """Test endpoint to debug flight integration"""
+    import io
+    import contextlib
+    
+    # Capture print output
+    output_buffer = io.StringIO()
+    
+    # Mock user preferences
+    class MockUserPrefs:
+        departure_airports = ["LHR"]
+        stopovers_allowed = False
+    
+    user_preferences = MockUserPrefs()
+    
+    # Capture all print statements
+    with contextlib.redirect_stdout(output_buffer):
+        flights = fetch_flights_for_trip("La Graviere", "2025-06-30", "2025-07-01", user_preferences)
+    
+    debug_output = output_buffer.getvalue()
+    
+    return {
+        "success": True,
+        "flights_found": len(flights) if flights else 0,
+        "flights_data": flights[:1] if flights else [],  # Just first flight to avoid huge response
+        "debug_output": debug_output.split('\n'),
+        "message": "Flight integration test completed"
+    }
+
 @app.post("/analyze-trips")
 async def analyze_trips(request: TripRequest, background_tasks: BackgroundTasks):
     """
