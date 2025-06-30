@@ -100,7 +100,8 @@ class FlightFetcher:
                                       outbound_time_range, return_time_range, stopovers_allowed)
             
             # Make API request
-            response = requests.get(self.base_url, headers=self.headers, params=params, timeout=30)
+            search_url = f"{self.base_url}/v2/search"
+            response = requests.get(search_url, headers=self.headers, params=params, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
