@@ -24,7 +24,8 @@ def fetch_flights(departure_airport, destination_airport, outbound_date, return_
 
 class FlightFetcher:
     def __init__(self):
-        self.api_key = os.getenv('KIWI_API_KEY')
+        # Try environment variable first, then fallback to direct key for Railway deployment
+        self.api_key = os.getenv('KIWI_API_KEY') or "481a550d02msh234f431534bff22p1ab62bjsn7b3bb79de1a8"
         self.base_url = "https://kiwi-com-cheap-flights.p.rapidapi.com"
         
         # Check if API is available, but don't fail if not
@@ -34,7 +35,23 @@ class FlightFetcher:
                 'X-RapidAPI-Host': 'kiwi-com-cheap-flights.p.rapidapi.com'
             }
             self.api_enabled = True
-            print("✅ Flight API enabled")
+            print(f"✅ Flight API enabled with key: {self.api_key[:10]}...")
+            
+            # Test API connection with a simple request
+            try:
+                test_response = requests.get(
+                    f"{self.base_url}/locations/query",
+                    headers=self.headers,
+                    params={'term': 'LHR', 'locale': 'en'},
+                    timeout=10
+                )
+                if test_response.status_code == 200:
+                    print("✅ Kiwi API connection test successful")
+                else:
+                    print(f"⚠️ Kiwi API test failed: {test_response.status_code} - {test_response.text[:100]}")
+                    
+            except Exception as e:
+                print(f"⚠️ Kiwi API test error: {e}")
         else:
             self.api_enabled = False
             print("⚠️ Flight API disabled - using mock data fallback")
@@ -107,12 +124,29 @@ class FlightFetcher:
             params = self._build_params(departure_airport, destination_airport, outbound_date, return_date, 
                                       outbound_time_range, return_time_range, stopovers_allowed)
             
+            print(f"🔍 [DEBUG] API call parameters: {params}")
+            
             # Make API request
             search_url = f"{self.base_url}/v2/search"
+            print(f"🔍 [DEBUG] Making request to: {search_url}")
+            print(f"🔍 [DEBUG] Headers: {dict(self.headers)}")
+            
             response = requests.get(search_url, headers=self.headers, params=params, timeout=30)
+            
+            print(f"🔍 [DEBUG] Response status: {response.status_code}")
+            print(f"🔍 [DEBUG] Response headers: {dict(response.headers)}")
             
             if response.status_code == 200:
                 data = response.json()
+                print(f"🔍 [DEBUG] Response data keys: {list(data.keys()) if data else 'No data'}")
+                
+                if 'data' in data:
+                    print(f"🔍 [DEBUG] Number of flights in response: {len(data['data'])}")
+                    if data['data']:
+                        print(f"🔍 [DEBUG] Sample flight keys: {list(data['data'][0].keys())}")
+                else:
+                    print(f"🔍 [DEBUG] No 'data' key in response: {data}")
+                
                 flights = self._process_flight_data(data)
                 
                 if flights:
@@ -121,23 +155,32 @@ class FlightFetcher:
                     return flights
                 else:
                     print(f"⚠️ API returned no flights for {departure_airport} -> {destination_airport}")
+                    print(f"⚠️ Falling back to mock data")
                     return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
                     
             elif response.status_code == 429:
                 print(f"⚠️ Rate limited for {departure_airport} -> {destination_airport}")
+                print(f"⚠️ Response: {response.text[:200]}")
                 return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
             elif response.status_code == 401:
                 print(f"⚠️ Unauthorized for {departure_airport} -> {destination_airport}")
+                print(f"⚠️ Response: {response.text[:200]}")
                 return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
             else:
                 print(f"⚠️ API error {response.status_code} for {departure_airport} -> {destination_airport}")
+                print(f"⚠️ Response: {response.text[:200]}")
                 return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
                 
         except requests.exceptions.Timeout:
             print(f"⚠️ Timeout for {departure_airport} -> {destination_airport}")
             return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Request error for {departure_airport} -> {destination_airport}: {e}")
+            return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
         except Exception as e:
-            print(f"❌ Error fetching flights: {e}")
+            print(f"❌ Unexpected error for {departure_airport} -> {destination_airport}: {e}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
             return self._create_mock_flights(departure_airport, destination_airport, outbound_date, return_date, outbound_time_range, return_time_range)
 
     def _filter_flights_by_time_window(self, flights, preferred_hour, window_hours=5):
@@ -525,6 +568,17 @@ class FlightFetcher:
         outbound_hour = self._parse_preferred_hour(outbound_time_range, default=19)
         return_hour = self._parse_preferred_hour(return_time_range, default=17)
         
+        # Create realistic airline mappings based on departure airport
+        airport_airlines = {
+            'LHR': ['British Airways', 'Virgin Atlantic', 'Air France', 'KLM', 'Lufthansa'],
+            'LGW': ['easyJet', 'British Airways', 'Norwegian', 'TUI Airways'],
+            'STN': ['Ryanair', 'easyJet'],
+            'LTN': ['easyJet', 'Wizz Air', 'TUI Airways'],
+            'default': ['British Airways', 'Air France', 'KLM']
+        }
+        
+        available_airlines = airport_airlines.get(departure_airport, airport_airlines['default'])
+        
         # Create 2-3 mock flights with varying prices and times
         mock_flights = []
         
@@ -539,7 +593,7 @@ class FlightFetcher:
                 'departure': f'{outbound_hour:02d}:{random.randint(0, 59):02d}',
                 'arrival': f'{(outbound_hour + 2) % 24:02d}:{random.randint(0, 59):02d}',
                 'duration': '2h 15m',
-                'airline': 'easyJet',
+                'airline': random.choice(available_airlines),
                 'stops': 0,
                 'via': None
             },
@@ -547,7 +601,7 @@ class FlightFetcher:
                 'departure': f'{return_hour:02d}:{random.randint(0, 59):02d}',
                 'arrival': f'{(return_hour + 2) % 24:02d}:{random.randint(0, 59):02d}',
                 'duration': '2h 10m',
-                'airline': 'easyJet',
+                'airline': random.choice(available_airlines),
                 'stops': 0,
                 'via': None
             },
@@ -568,7 +622,7 @@ class FlightFetcher:
                 'departure': f'{alt_outbound:02d}:{random.randint(0, 59):02d}',
                 'arrival': f'{(alt_outbound + 2) % 24:02d}:{random.randint(0, 59):02d}',
                 'duration': '1h 55m',
-                'airline': 'Ryanair',
+                'airline': random.choice(available_airlines),
                 'stops': 0,
                 'via': None
             },
@@ -576,12 +630,13 @@ class FlightFetcher:
                 'departure': f'{alt_return:02d}:{random.randint(0, 59):02d}',
                 'arrival': f'{(alt_return + 2) % 24:02d}:{random.randint(0, 59):02d}',
                 'duration': '1h 55m',
-                'airline': 'Ryanair',
+                'airline': random.choice(available_airlines),
                 'stops': 0,
                 'via': None
             },
             'mock_data_note': 'Flight API unavailable - showing sample data'
         })
         
-        print(f"✅ Created {len(mock_flights)} mock flights for {departure_airport} -> {destination_airport}")
+        print(f"✅ Created {len(mock_flights)} realistic mock flights for {departure_airport} -> {destination_airport}")
+        print(f"   Airlines: {[f['outbound']['airline'] for f in mock_flights]}")
         return mock_flights 
